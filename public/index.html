@@ -227,13 +227,14 @@
             try {
                 const [statusRes, logsRes, tradesRes] = await Promise.all([
                     fetch('/api/status').catch(() => null),
-                    fetch('/api/logs').catch(() => null),
+                    // fetch('/api/logs').catch(() => null) - Logs are in /api/status
                     fetch('/api/trades').catch(() => null)
                 ]);
 
                 // Handle Status
+                let status = null;
                 if (statusRes && statusRes.ok) {
-                    const status = await statusRes.json();
+                    status = await statusRes.json();
                     const isRunning = status.isRunning;
 
                     // Badges
@@ -310,9 +311,9 @@
                 }
 
                 // Handle Logs
-                if (logsRes && logsRes.ok) {
-                    const logsData = await logsRes.json();
-                    const logs = logsData.logs || [];
+                // `status` is already parsed above in Handle Status
+                if (typeof status !== 'undefined' && status) {
+                    const logs = status.logs || [];
                     if (logs.length > lastLogsCount) {
                         const logsWin = document.getElementById('logs-window');
 
