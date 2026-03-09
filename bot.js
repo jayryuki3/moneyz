@@ -1,162 +1,174 @@
-import { db, run, get } from './database.js';
-import axios from 'axios';
-import { ethers } from 'ethers';
-import { ClobClient } from '@polymarket/clob-client';
+/**
+ * bot.js — Main Bot Orchestrator
+ *
+ * Ties together the scanner, strategies, and executor into a single
+ * continuous loop. Exposes start/stop/status for the server API.
+ */
+import { MarketScanner } from './scanner.js';
+import { RebalancingStrategy } from './strategies/rebalancing.js';
+import { CombinatorialStrategy } from './strategies/combinatorial.js';
+import { Executor } from './executor.js';
+import { getSettings, insertOpportunity, insertLog, getStats } from './database.js';
 
-class PolymarketArbBot {
-    constructor() {
-        this.settings = null;
-        this.clobClient = null;
-        this.plannedActions = [];
-        this.isRunning = false;
-    }
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
-    /**
-     * loadConfig: Fetches user settings from the database and conditionally 
-     * initializes the CLOB client for live trading.
-     */
-    async loadConfig() {
-        try {
-            this.settings = await get('SELECT * FROM settings WHERE id=1');
+export class ArbBot {
+  constructor() {
+    this.scanner = new MarketScanner();
+    this.rebalancing = new RebalancingStrategy(this.scanner);
+    this.combinatorial = new CombinatorialStrategy(this.scanner);
+    this.executor = new Executor();
 
-            if (!this.settings) {
-                console.warn('No settings found in DB. Please initialize settings first.');
-                return;
-            }
+    this.running = false;
+    this.paused = false;
+    this.loopHandle = null;
+    this.cycleCount = 0;
+    this.lastCycleTime = null;
+    this.recentOpportunities = [];
+  }
 
-            const { paper_mode, api_key, api_secret, api_passphrase, private_key } = this.settings;
+  /**
+   * One full scan-analyze-execute cycle.
+   */
+  async runCycle() {
+    const settings = getSettings();
+    const minSpread = settings.min_spread_pct || 0.5;
+    const maxMarkets = settings.max_markets || 200;
 
-            // Handle SQLite boolean conversions seamlessly
-            const isPaperMode = paper_mode === 1 || paper_mode === true || paper_mode === 'true';
-            
-            if (!isPaperMode && api_key && api_secret && api_passphrase) {
-                // Initialize an ethers Wallet required for request signing
-                const wallet = private_key 
-                    ? new ethers.Wallet(private_key) 
-                    : ethers.Wallet.createRandom();
+    try {
+      // 1. Scan markets
+      const markets = await this.scanner.scan(maxMarkets);
+      if (markets.length === 0) {
+        insertLog('WARN', 'bot', 'No markets found in scan — check API connectivity');
+        return;
+      }
 
-                const creds = {
-                    key: api_key,
-                    secret: api_secret,
-                    passphrase: api_passphrase,
-                };
+      // 2. Run rebalancing strategy (orderbook-based, slower)
+      //    Only check top markets by volume/liquidity to manage API calls
+      const topMarkets = markets
+        .filter(m => m.liquidity > 1000) // skip illiquid markets
+        .sort((a, b) => b.volume - a.volume)
+        .slice(0, 50); // top 50 by volume
 
-                // Initialize the Polymarket CLOB Client (137 = Polygon Mainnet)
-                this.clobClient = new ClobClient(
-                    "https://clob.polymarket.com",
-                    137,
-                    wallet,
-                    creds
-                );
-                console.log('CLOB Client initialized for live active trading.');
-            } else {
-                console.log('Bot initialized in Paper Trading mode.');
-            }
-        } catch (error) {
-            console.error('Error loading config:', error);
-            await this.logEvent('ERROR', `Failed to load config: ${error.message}`);
+      const rebalOpps = await this.rebalancing.analyze(topMarkets, minSpread);
+
+      // 3. Run combinatorial strategy (price-based, fast)
+      const combiOpps = await this.combinatorial.analyze(this.scanner.eventGroups, minSpread);
+
+      // 4. Merge and deduplicate opportunities
+      const allOpps = [...rebalOpps, ...combiOpps];
+      this.recentOpportunities = allOpps.slice(0, 20); // keep top 20 for dashboard
+
+      // 5. Log opportunities to DB
+      for (const opp of allOpps) {
+        insertOpportunity({
+          strategy: opp.strategy,
+          market_slug: opp.market_slug || '',
+          market_question: opp.market_question || '',
+          description: opp.description || '',
+          spread: opp.spread || 0,
+          tokens: JSON.stringify(opp.tokens || []),
+          timestamp: new Date().toISOString(),
+          acted_on: 0
+        });
+      }
+
+      // 6. Execute on actionable opportunities (rebalancing only — these are guaranteed arbs)
+      //    Combinatorial PAIR_DIVERGENCE are informational only
+      const actionable = allOpps.filter(o =>
+        ['BUY_ALL', 'SELL_ALL', 'CROSS_BUY_YES', 'CROSS_SELL_YES'].includes(o.type) &&
+        o.profitPerShare > 0 &&
+        o.maxShares > 0
+      );
+
+      if (actionable.length > 0) {
+        insertLog('INFO', 'bot', `Found ${actionable.length} actionable opportunities this cycle`);
+
+        for (const opp of actionable) {
+          const trade = await this.executor.execute(opp);
+          if (trade) {
+            // Mark opportunity as acted on
+            opp.acted_on = 1;
+          }
         }
+      }
+
+      this.cycleCount++;
+      this.lastCycleTime = new Date().toISOString();
+
+      const mode = settings.paper_mode === 1 ? 'PAPER' : 'LIVE';
+      insertLog('INFO', 'bot',
+        `Cycle #${this.cycleCount} complete [${mode}]: ${markets.length} markets scanned, ${allOpps.length} opps found, ${actionable.length} acted on`);
+
+    } catch (err) {
+      insertLog('ERROR', 'bot', `Cycle error: ${err.message}`);
+    }
+  }
+
+  /**
+   * Start the bot loop.
+   */
+  async start() {
+    if (this.running) return;
+    this.running = true;
+    this.paused = false;
+
+    const settings = getSettings();
+    const intervalSec = settings.scan_interval_sec || 30;
+
+    insertLog('INFO', 'bot', `Bot started — scanning every ${intervalSec}s in ${settings.paper_mode === 1 ? 'PAPER' : 'LIVE'} mode`);
+
+    // Main loop
+    while (this.running) {
+      if (!this.paused) {
+        await this.runCycle();
+      }
+      // Re-read interval each cycle in case user changed it
+      const currentSettings = getSettings();
+      const waitMs = (currentSettings.scan_interval_sec || 30) * 1000;
+      await sleep(waitMs);
     }
 
-    /**
-     * scanMarket: Scans all token outcomes for a given market condition structure
-     * and evaluates whether an arbitrage opportunity exists below 1.0.
-     * @param {Array<string>} conditionTokens - Array of token_ids representing market outcomes
-     */
-    async scanMarket(conditionTokens) {
-        if (!conditionTokens || conditionTokens.length === 0) return;
-        
-        try {
-            let bestAsksSum = 0;
-            const orderBooks = {};
+    insertLog('INFO', 'bot', 'Bot stopped');
+  }
 
-            // 1. Fetch order books and calculate Best Asks sum
-            for (const tokenId of conditionTokens) {
-                // Hitting the CLOB unauthenticated orderbook endpoint
-                const response = await axios.get(`https://clob.polymarket.com/book?token_id=${tokenId}`);
-                
-                // Safety check: ensure asks exist and capture the lowest price
-                if (response.data && response.data.asks && response.data.asks.length > 0) {
-                    const bestAskPrice = parseFloat(response.data.asks[0].price);
-                    bestAsksSum += bestAskPrice;
-                    orderBooks[tokenId] = response.data.asks[0];
-                } else {
-                    console.log(`Bypassing: Missing asks for token ${tokenId}`);
-                    return;
-                }
-            }
+  /**
+   * Stop the bot loop.
+   */
+  stop() {
+    this.running = false;
+    insertLog('INFO', 'bot', 'Bot stop requested');
+  }
 
-            console.log(`Scan completed for [${conditionTokens.join(', ')}]. Sum of Best Asks = ${bestAsksSum}`);
+  /**
+   * Pause/resume without full stop.
+   */
+  togglePause() {
+    this.paused = !this.paused;
+    insertLog('INFO', 'bot', `Bot ${this.paused ? 'paused' : 'resumed'}`);
+  }
 
-            // 2. Arbitrage Condition Match (If Sum of best asks is < 1.0)
-            if (bestAsksSum < 1.0) {
-                const expectedProfit = 1.0 - bestAsksSum;
-                
-                // Create a Planned Action
-                this.plannedActions.push({
-                    type: 'ARB_BUY_ALL',
-                    tokens: conditionTokens,
-                    cost: bestAsksSum,
-                    profit: expectedProfit,
-                    timestamp: Date.now()
-                });
+  /**
+   * Get current bot status for the dashboard.
+   */
+  getStatus() {
+    const settings = getSettings();
+    const stats = getStats();
 
-                const isPaperMode = this.settings?.paper_mode === 1 || this.settings?.paper_mode === true;
-
-                if (isPaperMode) {
-                    // PAPER TRADING LOGIC
-                    const tradeId = `paper_${Date.now()}`;
-                    await run(
-                        'INSERT INTO trades (trade_id, market, side, size, price, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
-                        [tradeId, conditionTokens.join(','), 'BUY_ALL', 1, bestAsksSum, new Date().toISOString()]
-                    );
-                    
-                    const logMessage = `Paper Trade Completed - Profit ${expectedProfit.toFixed(4)}`;
-                    await this.logEvent('INFO', logMessage);
-                    console.log(logMessage);
-                } else {
-                    // LIVE TRADING LOGIC
-                    await this.logEvent('INFO', `Executing Live Arbitrage - Expected Arb Spread ${expectedProfit.toFixed(4)}`);
-                    // Execution routes through this.clobClient here natively
-                }
-            }
-        } catch (error) {
-            console.error('Error scanning market:', error.message);
-            await this.logEvent('ERROR', `Error scanning market: ${error.message}`);
-        }
-    }
-
-    /**
-     * Start continuous background scanner on interval
-     */
-    async startScanning(intervalMs, conditionTokens) {
-        this.isRunning = true;
-        await this.loadConfig();
-
-        console.log(`Started market scanner. Polling every ${intervalMs}ms...`);
-        while (this.isRunning) {
-            await this.scanMarket(conditionTokens);
-            await new Promise(resolve => setTimeout(resolve, intervalMs));
-        }
-    }
-
-    stopScanning() {
-        this.isRunning = false;
-        console.log('Scanner stopped gracefully.');
-    }
-
-    // Diagnostic logger into sqlite DB
-    async logEvent(level, message) {
-        try {
-            await run(
-                'INSERT INTO logs (level, message, timestamp) VALUES (?, ?, ?)',
-                [level, message, new Date().toISOString()]
-            );
-        } catch (e) {
-            console.error('Failed to write log to DB');
-        }
-    }
+    return {
+      running: this.running,
+      paused: this.paused,
+      paperMode: settings.paper_mode === 1,
+      cycleCount: this.cycleCount,
+      lastCycleTime: this.lastCycleTime,
+      lastScanTime: this.scanner.lastScanTime,
+      marketsLoaded: this.scanner.markets.length,
+      eventGroups: Object.keys(this.scanner.eventGroups).length,
+      recentOpportunities: this.recentOpportunities,
+      scanInterval: settings.scan_interval_sec,
+      ...stats
+    };
+  }
 }
 
-// Ensure proper syntax for ES6 imports/exports
-export { PolymarketArbBot };
+export default ArbBot;
