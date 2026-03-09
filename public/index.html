@@ -1,358 +1,551 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Moneyz Arbitrage Bot</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>moneyz - Arbitrage Bot</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0e17; --surface: #111827; --surface2: #1a2236;
+      --border: #1e2d4a; --text: #e2e8f0; --text2: #8899b4;
+      --green: #22c55e; --red: #ef4444; --amber: #f59e0b;
+      --blue: #3b82f6; --purple: #a855f7; --cyan: #06b6d4;
+    }
+    body { font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace; background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: var(--cyan); text-decoration: none; }
+
+    /* Header */
+    .header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 12px 24px; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
+    .header h1 { font-size: 18px; font-weight: 700; letter-spacing: 1px; }
+    .header h1 span { color: var(--green); }
+    .header-controls { display: flex; gap: 8px; align-items: center; }
+    .badge { padding: 4px 12px; border-radius: 20px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .badge-green { background: rgba(34,197,94,0.15); color: var(--green); }
+    .badge-red { background: rgba(239,68,68,0.15); color: var(--red); }
+    .badge-amber { background: rgba(245,158,11,0.15); color: var(--amber); }
+    .badge-purple { background: rgba(168,85,247,0.15); color: var(--purple); }
+    .badge-blue { background: rgba(59,130,246,0.15); color: var(--blue); }
+
+    /* Buttons */
+    button { font-family: inherit; cursor: pointer; border: none; border-radius: 6px; padding: 8px 16px; font-size: 12px; font-weight: 600; transition: all 0.15s; }
+    .btn-start { background: var(--green); color: #000; }
+    .btn-start:hover { background: #16a34a; }
+    .btn-stop { background: var(--red); color: #fff; }
+    .btn-stop:hover { background: #dc2626; }
+    .btn-pause { background: var(--amber); color: #000; }
+    .btn-pause:hover { background: #d97706; }
+    .btn-save { background: var(--blue); color: #fff; }
+    .btn-save:hover { background: #2563eb; }
+    .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text2); }
+    .btn-ghost:hover { border-color: var(--text2); color: var(--text); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    /* Layout */
+    .container { max-width: 1400px; margin: 0 auto; padding: 16px 24px; }
+    .stats-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px; }
+    .stat-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 16px; }
+    .stat-card .label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text2); margin-bottom: 4px; }
+    .stat-card .value { font-size: 22px; font-weight: 700; }
+    .stat-card .value.green { color: var(--green); }
+    .stat-card .value.red { color: var(--red); }
+    .stat-card .value.blue { color: var(--blue); }
+    .stat-card .value.amber { color: var(--amber); }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-full { margin-bottom: 16px; }
+    @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+    /* Panels */
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .panel-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; background: var(--surface2); }
+    .panel-header h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+    .panel-body { padding: 0; max-height: 380px; overflow-y: auto; }
+    .panel-body.padded { padding: 16px; }
+
+    /* Tables */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { padding: 8px 12px; text-align: left; font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text2); background: var(--surface2); position: sticky; top: 0; }
+    td { padding: 8px 12px; border-top: 1px solid var(--border); white-space: nowrap; }
+    tr:hover td { background: rgba(59,130,246,0.03); }
+    .mono { font-family: 'SF Mono', 'Fira Code', monospace; }
+    .text-green { color: var(--green); } .text-red { color: var(--red); }
+    .text-amber { color: var(--amber); } .text-blue { color: var(--blue); }
+    .text-purple { color: var(--purple); } .text-muted { color: var(--text2); }
+    .text-cyan { color: var(--cyan); }
+    .truncate { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Log levels */
+    .log-row { padding: 4px 12px; font-size: 11px; border-bottom: 1px solid rgba(30,45,74,0.3); display: flex; gap: 8px; }
+    .log-row .ts { color: var(--text2); min-width: 75px; }
+    .log-row .lvl { min-width: 50px; font-weight: 600; }
+    .log-row .src { color: var(--purple); min-width: 80px; }
+    .log-row .msg { color: var(--text); flex: 1; word-break: break-word; white-space: normal; }
+
+    /* Settings form */
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+    .form-group { display: flex; flex-direction: column; gap: 4px; }
+    .form-group label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text2); }
+    .form-group input, .form-group select {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      padding: 8px 12px; font-size: 13px; color: var(--text); font-family: inherit;
+    }
+    .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--blue); }
+    .form-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* Toggle */
+    .toggle-wrap { display: flex; align-items: center; gap: 10px; }
+    .toggle { position: relative; width: 44px; height: 24px; cursor: pointer; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider { position: absolute; inset: 0; background: var(--border); border-radius: 24px; transition: 0.2s; }
+    .toggle .slider::before { content: ''; position: absolute; width: 18px; height: 18px; border-radius: 50%; background: var(--text); left: 3px; top: 3px; transition: 0.2s; }
+    .toggle input:checked + .slider { background: var(--green); }
+    .toggle input:checked + .slider::before { transform: translateX(20px); }
+    .toggle-label { font-size: 12px; font-weight: 600; }
+
+    /* Tabs */
+    .tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); }
+    .tab { padding: 10px 20px; font-size: 12px; font-weight: 600; color: var(--text2); cursor: pointer; border-bottom: 2px solid transparent; transition: 0.15s; }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--cyan); border-bottom-color: var(--cyan); }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+
+    /* Pulse animation for live indicator */
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .pulse { animation: pulse 2s ease-in-out infinite; }
+  </style>
 </head>
-<body class="bg-slate-100 min-h-screen font-sans">
+<body>
 
-    <!-- Header -->
-    <header class="bg-white shadow-sm sticky top-0 z-10">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between">
-            <div class="flex items-center space-x-4">
-                <h1 class="text-2xl font-bold text-slate-800">Moneyz Arbitrage Bot</h1>
-                <span id="status-badge" class="px-3 py-1 rounded-full text-sm font-semibold bg-gray-200 text-gray-800">Loading...</span>
-                <span id="mode-badge" class="px-3 py-1 rounded-full text-sm font-semibold bg-purple-100 text-purple-800">Mode: ?</span>
-            </div>
-            <div class="flex space-x-3">
-                <button id="btn-start" onclick="startBot()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
-                    Start Bot
-                </button>
-                <button id="btn-stop" onclick="stopBot()" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-md font-medium transition-colors disabled:opacity-50">
-                    Stop Bot
-                </button>
-            </div>
+<!-- ═══ HEADER ═══ -->
+<div class="header">
+  <div style="display:flex;align-items:center;gap:16px;">
+    <h1>MONEY<span>Z</span></h1>
+    <span id="badge-status" class="badge badge-amber">OFFLINE</span>
+    <span id="badge-mode" class="badge badge-purple">PAPER</span>
+  </div>
+  <div class="header-controls">
+    <button id="btn-start" class="btn-start" onclick="startBot()">START</button>
+    <button id="btn-pause" class="btn-pause" onclick="pauseBot()" disabled>PAUSE</button>
+    <button id="btn-stop" class="btn-stop" onclick="stopBot()" disabled>STOP</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ═══ STATS BAR ═══ -->
+  <div class="stats-bar">
+    <div class="stat-card"><div class="label">Total P&L</div><div class="value green" id="stat-pnl">$0.00</div></div>
+    <div class="stat-card"><div class="label">Trades Today</div><div class="value blue" id="stat-trades-today">0</div></div>
+    <div class="stat-card"><div class="label">Win Rate</div><div class="value amber" id="stat-winrate">0%</div></div>
+    <div class="stat-card"><div class="label">Markets Scanned</div><div class="value" id="stat-markets">0</div></div>
+    <div class="stat-card"><div class="label">Active Opps</div><div class="value cyan" id="stat-opps">0</div></div>
+    <div class="stat-card"><div class="label">Cycle</div><div class="value text-muted" id="stat-cycle">#0</div></div>
+  </div>
+
+  <!-- ═══ TABS ═══ -->
+  <div class="tabs">
+    <div class="tab active" onclick="switchTab('dashboard')">Dashboard</div>
+    <div class="tab" onclick="switchTab('trades')">Trades</div>
+    <div class="tab" onclick="switchTab('logs')">Logs</div>
+    <div class="tab" onclick="switchTab('settings')">Settings</div>
+  </div>
+
+  <!-- ═══ TAB: DASHBOARD ═══ -->
+  <div id="tab-dashboard" class="tab-content active" style="padding-top:16px;">
+    <div class="grid-2">
+      <!-- Opportunities Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Live Opportunities</h2>
+          <span class="text-muted" style="font-size:11px;" id="opp-count">0 found</span>
         </div>
-    </header>
+        <div class="panel-body" id="opp-list" style="min-height:200px;"></div>
+      </div>
 
-    <!-- Main Content -->
-    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-            <!-- Status Card -->
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                    <h2 class="text-lg font-semibold text-slate-800">Status & Scanner</h2>
-                </div>
-                <div class="p-6 space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-slate-50 p-4 rounded border border-slate-100">
-                            <p class="text-sm text-slate-500 font-medium whitespace-nowrap">Running</p>
-                            <p id="val-running" class="text-xl font-bold text-slate-800 mt-1">...</p>
-                        </div>
-                        <div class="bg-slate-50 p-4 rounded border border-slate-100">
-                            <p class="text-sm text-slate-500 font-medium whitespace-nowrap">Last Scan</p>
-                            <p id="val-last-scan" class="text-sm font-bold text-slate-800 mt-1 truncate">...</p>
-                        </div>
-                    </div>
-
-                    <div class="mt-4">
-                        <h3 class="text-sm font-semibold text-slate-700 mb-2">Recent Opportunities</h3>
-                        <div id="opportunities-list" class="bg-slate-50 border border-slate-200 rounded p-4 h-32 overflow-y-auto text-sm space-y-2">
-                            <p class="text-slate-500 italic">Waiting for scan data...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Settings Card -->
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                    <h2 class="text-lg font-semibold text-slate-800">Modes & Keys</h2>
-                </div>
-                <form id="settings-form" onsubmit="saveSettings(event)" class="p-6 space-y-4">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700">Mode</label>
-                            <select id="input-mode" name="mode" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border border-slate-300">
-                                <option value="paper">Paper Trading</option>
-                                <option value="live">Live Trading</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-slate-700">Venue</label>
-                            <select id="input-venue" name="venue" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border border-slate-300">
-                                <option value="polymarket">Polymarket</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700">Polymarket API Key</label>
-                        <input type="text" id="input-apiKey" name="apiKey" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border border-slate-300" placeholder="Your API Key">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700">Secret</label>
-                        <input type="password" id="input-secret" name="secret" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border border-slate-300" placeholder="Your Secret">
-                    </div>
-                    <div>
-                        <label class="block text-sm font-medium text-slate-700">Passphrase</label>
-                        <input type="password" id="input-passphrase" name="passphrase" class="mt-1 block w-full rounded-md border-slate-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-2 border border-slate-300" placeholder="Your Passphrase">
-                    </div>
-
-                    <div class="pt-2">
-                        <button type="submit" id="btn-save" class="w-full bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-md font-medium transition-colors">
-                            Save Settings
-                        </button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- Trades / PL Card -->
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50">
-                    <h2 class="text-lg font-semibold text-slate-800">Executions & Pnl</h2>
-                </div>
-                <div class="p-0">
-                    <div class="overflow-x-auto">
-                        <table class="min-w-full divide-y divide-slate-200">
-                            <thead class="bg-slate-50">
-                                <tr>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Time</th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Market</th>
-                                    <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Strategy</th>
-                                    <th scope="col" class="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Size / Edge</th>
-                                </tr>
-                            </thead>
-                            <tbody id="trades-tbody" class="bg-white divide-y divide-slate-200">
-                                <tr><td colspan="4" class="px-6 py-4 text-center text-sm text-slate-500">Loading trades...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Logs Card -->
-            <div class="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-                    <h2 class="text-lg font-semibold text-slate-800">System Logs</h2>
-                    <span class="flex h-3 w-3">
-                      <span id="log-ping" class="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75 hidden"></span>
-                      <span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
-                    </span>
-                </div>
-                <div class="p-0">
-                    <div id="logs-window" class="bg-slate-900 text-emerald-400 font-mono text-xs p-4 h-80 overflow-y-auto leading-relaxed">
-                        Loading logs...
-                    </div>
-                </div>
-            </div>
-
+      <!-- Recent Trades Panel -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>Recent Trades</h2>
+          <button class="btn-ghost" style="font-size:10px;padding:4px 10px;" onclick="switchTab('trades')">VIEW ALL</button>
         </div>
-    </main>
+        <div class="panel-body">
+          <table>
+            <thead><tr><th>Time</th><th>Strategy</th><th>Side</th><th>Cost</th><th>Profit</th><th>Status</th></tr></thead>
+            <tbody id="recent-trades"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
 
-    <script>
-        let lastLogsCount = 0;
+    <!-- Logs Preview -->
+    <div class="panel grid-full">
+      <div class="panel-header">
+        <h2>Activity Log</h2>
+        <button class="btn-ghost" style="font-size:10px;padding:4px 10px;" onclick="switchTab('logs')">FULL LOG</button>
+      </div>
+      <div class="panel-body" id="log-preview" style="max-height:220px;"></div>
+    </div>
+  </div>
 
-        // --- API Requests ---
+  <!-- ═══ TAB: TRADES ═══ -->
+  <div id="tab-trades" class="tab-content" style="padding-top:16px;">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Trade History</h2>
+        <button class="btn-ghost" style="font-size:10px;padding:4px 10px;" onclick="clearTable('trades')">CLEAR</button>
+      </div>
+      <div class="panel-body" style="max-height:600px;">
+        <table>
+          <thead><tr><th>ID</th><th>Time</th><th>Strategy</th><th>Market</th><th>Side</th><th>Shares</th><th>Cost</th><th>Exp. Profit</th><th>Status</th></tr></thead>
+          <tbody id="trades-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
 
-        async function fetchSettings() {
-            try {
-                const res = await fetch('/api/settings');
-                if (!res.ok) throw new Error('Failed to fetch settings');
-                const data = await res.json();
+  <!-- ═══ TAB: LOGS ═══ -->
+  <div id="tab-logs" class="tab-content" style="padding-top:16px;">
+    <div class="panel">
+      <div class="panel-header">
+        <h2>Full Activity Log</h2>
+        <button class="btn-ghost" style="font-size:10px;padding:4px 10px;" onclick="clearTable('logs')">CLEAR</button>
+      </div>
+      <div class="panel-body" id="full-logs" style="max-height:600px;"></div>
+    </div>
+  </div>
 
-                document.getElementById('input-mode').value = data.mode || 'paper';
-                document.getElementById('input-venue').value = data.venue || 'polymarket';
-                document.getElementById('input-apiKey').value = data.keys?.polymarket?.apiKey || '';
-                document.getElementById('input-secret').value = data.keys?.polymarket?.secret || '';
-                document.getElementById('input-passphrase').value = data.keys?.polymarket?.passphrase || '';
+  <!-- ═══ TAB: SETTINGS ═══ -->
+  <div id="tab-settings" class="tab-content" style="padding-top:16px;">
+    <div class="panel">
+      <div class="panel-header"><h2>Bot Configuration</h2></div>
+      <div class="panel-body padded">
+        <form id="settings-form" onsubmit="saveSettings(event)">
 
-                document.getElementById('mode-badge').innerText = `Mode: ${data.mode === 'live' ? 'LIVE' : 'PAPER'}`;
-                document.getElementById('mode-badge').className = data.mode === 'live' 
-                    ? 'px-3 py-1 rounded-full text-sm font-semibold bg-rose-100 text-rose-800' 
-                    : 'px-3 py-1 rounded-full text-sm font-semibold bg-purple-100 text-purple-800';
+          <!-- Mode Toggle -->
+          <div style="margin-bottom:20px;padding:16px;background:var(--bg);border-radius:8px;border:1px solid var(--border);">
+            <div class="toggle-wrap">
+              <label class="toggle">
+                <input type="checkbox" id="set-paper" checked>
+                <span class="slider"></span>
+              </label>
+              <span class="toggle-label" id="mode-label">PAPER TRADING</span>
+            </div>
+            <p style="font-size:11px;color:var(--text2);margin-top:8px;">Paper mode simulates trades without real money. Disable for live execution.</p>
+          </div>
 
-            } catch (err) {
-                console.error(err);
-            }
-        }
+          <!-- Bot Parameters -->
+          <h3 style="font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Bot Parameters</h3>
+          <div class="form-grid" style="margin-bottom:20px;">
+            <div class="form-group">
+              <label>Max Position (USD)</label>
+              <input type="number" id="set-max-pos" value="10" min="1" step="1">
+            </div>
+            <div class="form-group">
+              <label>Scan Interval (sec)</label>
+              <input type="number" id="set-interval" value="30" min="10" step="5">
+            </div>
+            <div class="form-group">
+              <label>Min Spread %</label>
+              <input type="number" id="set-min-spread" value="0.5" min="0.1" step="0.1">
+            </div>
+            <div class="form-group">
+              <label>Max Markets to Scan</label>
+              <input type="number" id="set-max-markets" value="200" min="10" step="10">
+            </div>
+          </div>
 
-        async function saveSettings(e) {
-            e.preventDefault();
-            const btn = document.getElementById('btn-save');
-            btn.innerText = 'Saving...';
-            btn.disabled = true;
+          <!-- API Credentials -->
+          <h3 style="font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;">Polymarket API Credentials</h3>
+          <div class="form-grid" style="margin-bottom:20px;">
+            <div class="form-group">
+              <label>API Key</label>
+              <input type="text" id="set-api-key" placeholder="Your CLOB API key">
+            </div>
+            <div class="form-group">
+              <label>API Secret</label>
+              <input type="password" id="set-api-secret" placeholder="API secret">
+            </div>
+            <div class="form-group">
+              <label>API Passphrase</label>
+              <input type="password" id="set-api-pass" placeholder="Passphrase">
+            </div>
+            <div class="form-group">
+              <label>Private Key (Wallet)</label>
+              <input type="password" id="set-privkey" placeholder="Ethereum private key">
+            </div>
+            <div class="form-group" style="grid-column: span 2;">
+              <label>Funder Address</label>
+              <input type="text" id="set-funder" placeholder="0x... (optional)">
+            </div>
+          </div>
 
-            const payload = {
-                mode: document.getElementById('input-mode').value,
-                venue: document.getElementById('input-venue').value,
-                keys: {
-                    polymarket: {
-                        apiKey: document.getElementById('input-apiKey').value,
-                        secret: document.getElementById('input-secret').value,
-                        passphrase: document.getElementById('input-passphrase').value
-                    }
-                }
-            };
+          <div class="form-actions">
+            <button type="submit" class="btn-save">SAVE SETTINGS</button>
+            <button type="button" class="btn-ghost" onclick="loadSettings()">RESET</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
 
-            try {
-                const res = await fetch('/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                if (!res.ok) throw new Error('Failed to save');
-                await fetchSettings();
-                alert('Settings saved successfully!');
-            } catch (err) {
-                alert('Error saving settings: ' + err.message);
-            } finally {
-                btn.innerText = 'Save Settings';
-                btn.disabled = false;
-            }
-        }
+</div>
 
-        async function startBot() {
-            try {
-                await fetch('/api/start', { method: 'POST' });
-                fetchDashboardData();
-            } catch (err) {
-                console.error('Failed to start:', err);
-            }
-        }
+<script>
+// ═══ STATE ═══════════════════════════════════════════════════════════════════
+let currentTab = 'dashboard';
+let refreshTimer = null;
 
-        async function stopBot() {
-            try {
-                await fetch('/api/stop', { method: 'POST' });
-                fetchDashboardData();
-            } catch (err) {
-                console.error('Failed to stop:', err);
-            }
-        }
+// ═══ API HELPERS ═════════════════════════════════════════════════════════════
+async function api(path, opts = {}) {
+  try {
+    const res = await fetch(`/api${path}`, {
+      headers: { 'Content-Type': 'application/json' },
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined
+    });
+    return await res.json();
+  } catch (e) {
+    console.error('API error:', e);
+    return null;
+  }
+}
 
-        async function fetchDashboardData() {
-            try {
-                const [statusRes, logsRes, tradesRes] = await Promise.all([
-                    fetch('/api/status').catch(() => null),
-                    // fetch('/api/logs').catch(() => null) - Logs are in /api/status
-                    fetch('/api/trades').catch(() => null)
-                ]);
+// ═══ BOT CONTROLS ════════════════════════════════════════════════════════════
+async function startBot() {
+  await api('/bot/start', { method: 'POST' });
+  refresh();
+}
+async function stopBot() {
+  await api('/bot/stop', { method: 'POST' });
+  refresh();
+}
+async function pauseBot() {
+  await api('/bot/pause', { method: 'POST' });
+  refresh();
+}
 
-                // Handle Status
-                let status = null;
-                if (statusRes && statusRes.ok) {
-                    status = await statusRes.json();
-                    const isRunning = status.isRunning;
+// ═══ TABS ════════════════════════════════════════════════════════════════════
+function switchTab(name) {
+  currentTab = name;
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    const tabs = ['dashboard', 'trades', 'logs', 'settings'];
+    t.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById(`tab-${name}`).classList.add('active');
+  refresh();
+}
 
-                    // Badges
-                    const badge = document.getElementById('status-badge');
-                    badge.innerText = isRunning ? 'Running' : 'Stopped';
-                    badge.className = isRunning 
-                        ? 'px-3 py-1 rounded-full text-sm font-semibold bg-emerald-100 text-emerald-800'
-                        : 'px-3 py-1 rounded-full text-sm font-semibold bg-gray-200 text-gray-800';
+// ═══ FORMATTING ══════════════════════════════════════════════════════════════
+function fmtTime(ts) {
+  if (!ts) return '--';
+  const d = new Date(ts);
+  return d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtMoney(v) {
+  const n = parseFloat(v) || 0;
+  return (n >= 0 ? '+' : '') + '$' + n.toFixed(4);
+}
+function levelColor(lvl) {
+  const m = { ERROR: 'text-red', WARN: 'text-amber', TRADE: 'text-green', INFO: 'text-blue', DEBUG: 'text-muted' };
+  return m[lvl] || 'text-muted';
+}
+function stratBadge(s) {
+  if (s === 'rebalancing') return '<span class="badge badge-green" style="font-size:9px;">REBAL</span>';
+  if (s === 'combinatorial') return '<span class="badge badge-purple" style="font-size:9px;">COMBI</span>';
+  return `<span class="badge badge-blue" style="font-size:9px;">${(s||'').toUpperCase()}</span>`;
+}
 
-                    document.getElementById('val-running').innerText = isRunning ? 'Yes' : 'No';
-                    document.getElementById('val-running').className = isRunning 
-                        ? 'text-xl font-bold text-emerald-600 mt-1'
-                        : 'text-xl font-bold text-gray-500 mt-1';
+// ═══ REFRESH DATA ════════════════════════════════════════════════════════════
+async function refresh() {
+  // Status + Stats
+  const status = await api('/status');
+  if (status) {
+    // Header badges
+    const sb = document.getElementById('badge-status');
+    if (status.running && !status.paused) {
+      sb.textContent = 'RUNNING'; sb.className = 'badge badge-green pulse';
+    } else if (status.running && status.paused) {
+      sb.textContent = 'PAUSED'; sb.className = 'badge badge-amber';
+    } else {
+      sb.textContent = 'STOPPED'; sb.className = 'badge badge-red';
+    }
+    const mb = document.getElementById('badge-mode');
+    mb.textContent = status.paperMode ? 'PAPER' : 'LIVE';
+    mb.className = status.paperMode ? 'badge badge-purple' : 'badge badge-red';
 
-                    document.getElementById('val-last-scan').innerText = status.lastScan 
-                        ? new Date(status.lastScan).toLocaleTimeString()
-                        : 'Never';
+    // Buttons
+    document.getElementById('btn-start').disabled = status.running;
+    document.getElementById('btn-pause').disabled = !status.running;
+    document.getElementById('btn-stop').disabled = !status.running;
+    document.getElementById('btn-pause').textContent = status.paused ? 'RESUME' : 'PAUSE';
 
-                    // Buttons
-                    document.getElementById('btn-start').disabled = isRunning;
-                    document.getElementById('btn-start').className = isRunning 
-                        ? 'bg-emerald-600/50 text-white px-4 py-2 rounded-md font-medium cursor-not-allowed'
-                        : 'bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-md font-medium transition-colors';
+    // Stats bar
+    const pnl = status.totalPnl || 0;
+    document.getElementById('stat-pnl').textContent = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
+    document.getElementById('stat-pnl').className = 'value ' + (pnl >= 0 ? 'green' : 'red');
+    document.getElementById('stat-trades-today').textContent = status.tradesToday || 0;
+    document.getElementById('stat-winrate').textContent = (status.winRate || 0) + '%';
+    document.getElementById('stat-markets').textContent = status.marketsLoaded || 0;
+    document.getElementById('stat-opps').textContent = status.activeOpps || 0;
+    document.getElementById('stat-cycle').textContent = '#' + (status.cycleCount || 0);
 
-                    document.getElementById('btn-stop').disabled = !isRunning;
-                    document.getElementById('btn-stop').className = !isRunning 
-                        ? 'bg-rose-600/50 text-white px-4 py-2 rounded-md font-medium cursor-not-allowed'
-                        : 'bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-md font-medium transition-colors';
+    // Opportunities
+    const oppEl = document.getElementById('opp-list');
+    const opps = status.recentOpportunities || [];
+    document.getElementById('opp-count').textContent = opps.length + ' found';
+    if (opps.length === 0) {
+      oppEl.innerHTML = '<div style="padding:40px;text-align:center;color:var(--text2);font-size:12px;">No opportunities detected yet. Start the bot to begin scanning.</div>';
+    } else {
+      oppEl.innerHTML = opps.map(o => `
+        <div style="padding:10px 14px;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            ${stratBadge(o.strategy)}
+            <span class="text-green mono" style="font-size:13px;font-weight:700;">+${(o.spread||0).toFixed(2)}%</span>
+          </div>
+          <div style="font-size:11px;color:var(--text);line-height:1.4;">${o.description || o.market_question || ''}</div>
+        </div>
+      `).join('');
+    }
+  }
 
-                    // Opportunities
-                    const oppsDiv = document.getElementById('opportunities-list');
-                    if (!status.recentOpportunities || status.recentOpportunities.length === 0) {
-                        oppsDiv.innerHTML = '<p class="text-slate-500 italic">No recent opportunities found.</p>';
-                    } else {
-                        oppsDiv.innerHTML = status.recentOpportunities.map(opp => `
-                            <div class="border-b border-slate-200 pb-2 mb-2 last:border-0 last:pb-0 last:mb-0">
-                                <div class="flex justify-between">
-                                    <span class="font-medium text-slate-700 truncate min-w-0 pr-2">${opp.marketTitle || 'Unknown Market'}</span>
-                                    <span class="text-emerald-600 font-bold shrink-0">Sum: ${opp.sum.toFixed(4)}</span>
-                                </div>
-                                <div class="flex justify-between text-xs text-slate-500 mt-1">
-                                    <span>Expected Margin: ${(opp.edge * 100).toFixed(2)}%</span>
-                                    <span>${new Date(opp.timestamp).toLocaleTimeString()}</span>
-                                </div>
-                            </div>
-                        `).join('');
-                    }
-                }
+  // Recent trades (dashboard)
+  const trades = await api('/trades?limit=8');
+  if (trades) {
+    const el = document.getElementById('recent-trades');
+    if (trades.length === 0) {
+      el.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text2);">No trades yet</td></tr>';
+    } else {
+      el.innerHTML = trades.map(t => `
+        <tr>
+          <td class="text-muted">${fmtTime(t.timestamp)}</td>
+          <td>${stratBadge(t.strategy)}</td>
+          <td>${t.side}</td>
+          <td class="mono">$${(t.cost||0).toFixed(4)}</td>
+          <td class="mono ${(t.expected_profit||0) >= 0 ? 'text-green' : 'text-red'}">${fmtMoney(t.expected_profit)}</td>
+          <td><span class="badge ${t.status?.includes('paper') ? 'badge-purple' : 'badge-green'}" style="font-size:9px;">${t.status}</span></td>
+        </tr>
+      `).join('');
+    }
+  }
 
-                // Handle Trades
-                if (tradesRes && tradesRes.ok) {
-                    const tradesData = await tradesRes.json();
-                    const trades = tradesData.trades || [];
-                    const tbody = document.getElementById('trades-tbody');
-                    if (!trades || trades.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="4" class="px-6 py-4 text-center text-sm text-slate-500 italic">No paper trades executed yet.</td></tr>';
-                    } else {
-                        tbody.innerHTML = trades.reverse().map(trade => `
-                            <tr class="hover:bg-slate-50 transition-colors">
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-500">${new Date(trade.timestamp).toLocaleTimeString()}</td>
-                                <td class="px-6 py-4 text-sm font-medium text-slate-900 truncate max-w-[200px]" title="${trade.marketTitle || '-'}">${trade.marketTitle || '-'}</td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm">
-                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
-                                        ${trade.strategy}
-                                    </span>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap text-sm text-slate-900 text-right">
-                                    <div class="font-medium">Size: ${trade.size}</div>
-                                    <div class="text-emerald-600 text-xs">+${(trade.profitExpected * 100).toFixed(2)}%</div>
-                                </td>
-                            </tr>
-                        `).join('');
-                    }
-                }
+  // Full trades table
+  if (currentTab === 'trades') {
+    const allTrades = await api('/trades?limit=100');
+    if (allTrades) {
+      const el = document.getElementById('trades-table');
+      el.innerHTML = allTrades.map(t => `
+        <tr>
+          <td class="text-muted mono" style="font-size:10px;">${t.trade_id?.slice(0,16) || ''}</td>
+          <td class="text-muted">${fmtTime(t.timestamp)}</td>
+          <td>${stratBadge(t.strategy)}</td>
+          <td class="truncate" title="${t.market_question || ''}">${t.market_question?.slice(0,50) || t.market_slug || ''}</td>
+          <td>${t.side}</td>
+          <td class="mono">${t.size}</td>
+          <td class="mono">$${(t.cost||0).toFixed(4)}</td>
+          <td class="mono ${(t.expected_profit||0) >= 0 ? 'text-green' : 'text-red'}">${fmtMoney(t.expected_profit)}</td>
+          <td><span class="badge ${t.status?.includes('paper') ? 'badge-purple' : 'badge-green'}" style="font-size:9px;">${t.status}</span></td>
+        </tr>
+      `).join('');
+    }
+  }
 
-                // Handle Logs
-                // `status` is already parsed above in Handle Status
-                if (typeof status !== 'undefined' && status) {
-                    const logs = status.logs || [];
-                    if (logs.length > lastLogsCount) {
-                        const logsWin = document.getElementById('logs-window');
+  // Logs
+  const logs = await api('/logs?limit=' + (currentTab === 'logs' ? 200 : 25));
+  if (logs) {
+    const html = logs.map(l => `
+      <div class="log-row">
+        <span class="ts">${fmtTime(l.timestamp)}</span>
+        <span class="lvl ${levelColor(l.level)}">${l.level}</span>
+        <span class="src">${l.source}</span>
+        <span class="msg">${l.message}</span>
+      </div>
+    `).join('');
+    document.getElementById('log-preview').innerHTML = html;
+    if (currentTab === 'logs') document.getElementById('full-logs').innerHTML = html;
+  }
+}
 
-                        // Ping animation for new logs
-                        const ping = document.getElementById('log-ping');
-                        ping.classList.remove('hidden');
-                        setTimeout(() => ping.classList.add('hidden'), 1000);
+// ═══ SETTINGS ════════════════════════════════════════════════════════════════
+async function loadSettings() {
+  const s = await api('/settings');
+  if (!s) return;
+  document.getElementById('set-paper').checked = s.paper_mode === 1;
+  updateModeLabel();
+  document.getElementById('set-max-pos').value = s.max_position_usd || 10;
+  document.getElementById('set-interval').value = s.scan_interval_sec || 30;
+  document.getElementById('set-min-spread').value = s.min_spread_pct || 0.5;
+  document.getElementById('set-max-markets').value = s.max_markets || 200;
+  document.getElementById('set-api-key').value = s.api_key || '';
+  document.getElementById('set-api-secret').value = s.api_secret || '';
+  document.getElementById('set-api-pass').value = s.api_passphrase || '';
+  document.getElementById('set-privkey').value = s.private_key || '';
+  document.getElementById('set-funder').value = s.funder_address || '';
+}
 
-                        logsWin.innerHTML = logs.map(log => {
-                            const time = new Date(log.timestamp).toLocaleTimeString();
-                            let msg = log.message;
-                            if (msg.includes('Arbitrage found')) {
-                                msg = `<span class="text-yellow-400 font-bold">${msg}</span>`;
-                            } else if (msg.includes('error') || msg.toLowerCase().includes('failed')) {
-                                msg = `<span class="text-rose-400">${msg}</span>`;
-                            } else if (msg.includes('Executing')) {
-                                msg = `<span class="text-blue-400">${msg}</span>`;
-                            }
-                            return `<div><span class="text-slate-500 opacity-50">[${time}]</span> ${msg}</div>`;
-                        }).join('');
+async function saveSettings(e) {
+  e.preventDefault();
+  const body = {
+    paper_mode: document.getElementById('set-paper').checked,
+    max_position_usd: parseFloat(document.getElementById('set-max-pos').value),
+    scan_interval_sec: parseInt(document.getElementById('set-interval').value),
+    min_spread_pct: parseFloat(document.getElementById('set-min-spread').value),
+    max_markets: parseInt(document.getElementById('set-max-markets').value),
+    api_key: document.getElementById('set-api-key').value,
+    api_secret: document.getElementById('set-api-secret').value,
+    api_passphrase: document.getElementById('set-api-pass').value,
+    private_key: document.getElementById('set-privkey').value,
+    funder_address: document.getElementById('set-funder').value
+  };
+  const result = await api('/settings', { method: 'POST', body });
+  if (result?.success) {
+    showToast('Settings saved');
+    refresh();
+  } else {
+    showToast('Failed to save settings', true);
+  }
+}
 
-                        // Autoscroll to bottom
-                        logsWin.scrollTop = logsWin.scrollHeight;
-                        lastLogsCount = logs.length;
-                    }
-                }
+function updateModeLabel() {
+  const checked = document.getElementById('set-paper').checked;
+  const label = document.getElementById('mode-label');
+  label.textContent = checked ? 'PAPER TRADING' : 'LIVE TRADING';
+  label.style.color = checked ? 'var(--green)' : 'var(--red)';
+}
+document.getElementById('set-paper').addEventListener('change', updateModeLabel);
 
-            } catch (err) {
-                console.error('Error fetching dashboard data:', err);
-            }
-        }
+async function clearTable(table) {
+  if (!confirm(`Clear all ${table}?`)) return;
+  await api(`/clear/${table}`, { method: 'POST' });
+  refresh();
+}
 
-        // --- Initialization ---
-        window.onload = () => {
-            fetchSettings();
-            fetchDashboardData();
-            // Auto refresh every 3 seconds
-            setInterval(fetchDashboardData, 3000);
-        };
-    </script>
+// ═══ TOAST ═══════════════════════════════════════════════════════════════════
+function showToast(msg, isError = false) {
+  const el = document.createElement('div');
+  el.textContent = msg;
+  Object.assign(el.style, {
+    position: 'fixed', bottom: '24px', right: '24px', padding: '10px 20px',
+    borderRadius: '8px', fontSize: '13px', fontWeight: '600', zIndex: '9999',
+    background: isError ? 'var(--red)' : 'var(--green)', color: isError ? '#fff' : '#000',
+    boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
+  });
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 2500);
+}
+
+// ═══ INIT ════════════════════════════════════════════════════════════════════
+loadSettings();
+refresh();
+refreshTimer = setInterval(refresh, 3000);
+</script>
 </body>
 </html>
