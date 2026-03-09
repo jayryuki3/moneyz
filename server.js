@@ -1,123 +1,192 @@
+/**
+ * server.js — Express API + Static Dashboard Server
+ *
+ * Single entry point: `node server.js` starts everything:
+ * - SQLite database (auto-created)
+ * - Arbitrage bot (scanner + strategies + executor)
+ * - REST API for the dashboard
+ * - Static file serving for the UI
+ */
 import express from 'express';
-import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { initializeDB, get, all, run } from './database.js';
-import { PolymarketArbBot } from './bot.js';
+import { ArbBot } from './bot.js';
+import {
+  getSettings, updateSettings,
+  getTrades, getOpportunities, getLogs,
+  getStats, clearData, insertLog
+} from './database.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const PORT = process.env.PORT || 4173;
 const app = express();
-app.use(cors());
+const bot = new ArbBot();
+
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-const bot = new PolymarketArbBot();
+// ── Status & Stats ──────────────────────────────────────────────────────────────
 
-// Endpoints
-app.get('/api/status', async (req, res) => {
-    try {
-        const logs = await all('SELECT * FROM logs ORDER BY id DESC LIMIT 15');
-        const settings = await get('SELECT paper_mode FROM settings WHERE id = 1');
-        res.json({
-            isRunning: bot.isRunning,
-            paperMode: settings ? (settings.paper_mode === 1 || settings.paper_mode === 'true') : true,
-            plannedActions: bot.plannedActions,
-            logs: logs || []
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+app.get('/api/status', (_req, res) => {
+  try {
+    res.json(bot.getStatus());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/trades', async (req, res) => {
-    try {
-        const trades = await all('SELECT * FROM trades ORDER BY id DESC LIMIT 50');
-        res.json(trades || []);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
+app.get('/api/stats', (_req, res) => {
+  try {
+    res.json(getStats());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-app.get('/api/settings', async (req, res) => {
-    try {
-        const settings = await get('SELECT * FROM settings WHERE id = 1') || {};
-        if (settings.api_key) settings.api_key = '****' + settings.api_key.slice(-4);
-        if (settings.api_secret) settings.api_secret = '********';
-        if (settings.private_key) settings.private_key = '********';
-        if (settings.api_passphrase) settings.api_passphrase = '********';
-        res.json(settings);
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
+// ── Bot Controls ────────────────────────────────────────────────────────────────
 
-app.post('/api/settings', async (req, res) => {
-    const { paper_mode, api_key, api_secret, api_passphrase, private_key } = req.body;
-    try {
-        const existing = await get('SELECT id FROM settings WHERE id = 1');
-        const pMode = (paper_mode === true || paper_mode === 1 || paper_mode === 'true' || paper_mode === "1") ? 1 : 0;
-        
-        if (existing) {
-            const updates = ['paper_mode = ?'];
-            const values = [pMode];
-            
-            if (api_key && !api_key.includes('*')) {
-                updates.push('api_key = ?'); values.push(api_key);
-            }
-            if (api_secret && api_secret !== '********') {
-                updates.push('api_secret = ?'); values.push(api_secret);
-            }
-            if (api_passphrase && api_passphrase !== '********') {
-                updates.push('api_passphrase = ?'); values.push(api_passphrase);
-            }
-            if (private_key && private_key !== '********') {
-                updates.push('private_key = ?'); values.push(private_key);
-            }
-            
-            values.push(1);
-            await run(`UPDATE settings SET ${updates.join(', ')} WHERE id = ?`, values);
-        } else {
-            await run(
-                `INSERT INTO settings (id, paper_mode, api_key, api_secret, api_passphrase, private_key) VALUES (?, ?, ?, ?, ?, ?)`,
-                [1, pMode, api_key || '', api_secret || '', api_passphrase || '', private_key || '']
-            );
-        }
-        
-        await bot.loadConfig();
-        res.json({ success: true });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/bot/start', async (req, res) => {
-    if (!bot.isRunning) {
-        // Default condition tokens for testing if none provided
-        const defaultTokens = req.body.tokens || ['TOKEN_A_TEST', 'TOKEN_B_TEST'];
-        bot.startScanning(5000, defaultTokens).catch(err => console.error("Scanner error:", err));
-    }
-    res.json({ success: true, isRunning: bot.isRunning });
-});
-
-app.post('/api/bot/stop', async (req, res) => {
-    if (bot.isRunning) {
-        bot.stopScanning();
-    }
-    res.json({ success: true, isRunning: false });
-});
-
-// Initialize database, load bot config, then start server
-const PORT = process.env.PORT || 3000;
-initializeDB()
-    .then(() => bot.loadConfig())
-    .then(() => {
-        app.listen(PORT, () => {
-            console.log(`Moneyz Server listening on port ${PORT}`);
-        });
-    })
-    .catch(err => {
-        console.error('Failed to initialize DB/Server:', err);
-        process.exit(1);
+app.post('/api/bot/start', (_req, res) => {
+  if (!bot.running) {
+    bot.start().catch(err => {
+      insertLog('ERROR', 'server', `Bot crashed: ${err.message}`);
     });
+    res.json({ success: true, running: true });
+  } else {
+    res.json({ success: false, message: 'Bot already running', running: true });
+  }
+});
+
+app.post('/api/bot/stop', (_req, res) => {
+  bot.stop();
+  res.json({ success: true, running: false });
+});
+
+app.post('/api/bot/pause', (_req, res) => {
+  bot.togglePause();
+  res.json({ success: true, paused: bot.paused });
+});
+
+// ── Opportunities ─────────────────────────────────────────────────────────────
+
+app.get('/api/opportunities', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 30;
+    res.json(getOpportunities(limit));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Trades ────────────────────────────────────────────────────────────────────
+
+app.get('/api/trades', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    res.json(getTrades(limit));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Logs ──────────────────────────────────────────────────────────────────────
+
+app.get('/api/logs', (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 80;
+    res.json(getLogs(limit));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Settings ────────────────────────────────────────────────────────────────────
+
+app.get('/api/settings', (_req, res) => {
+  try {
+    const s = getSettings();
+    // Mask sensitive fields
+    res.json({
+      ...s,
+      api_key: s.api_key ? '****' + s.api_key.slice(-4) : '',
+      api_secret: s.api_secret ? '********' : '',
+      api_passphrase: s.api_passphrase ? '********' : '',
+      private_key: s.private_key ? '********' : '',
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/settings', (req, res) => {
+  try {
+    const updates = {};
+    const body = req.body;
+
+    // Boolean toggle
+    if (body.paper_mode !== undefined) {
+      updates.paper_mode = (body.paper_mode === true || body.paper_mode === 1 || body.paper_mode === 'true') ? 1 : 0;
+    }
+
+    // Numeric settings
+    if (body.max_position_usd !== undefined) updates.max_position_usd = parseFloat(body.max_position_usd) || 10;
+    if (body.scan_interval_sec !== undefined) updates.scan_interval_sec = parseInt(body.scan_interval_sec) || 30;
+    if (body.min_spread_pct !== undefined) updates.min_spread_pct = parseFloat(body.min_spread_pct) || 0.5;
+    if (body.max_markets !== undefined) updates.max_markets = parseInt(body.max_markets) || 200;
+
+    // Credential fields — only update if not masked placeholder
+    if (body.api_key && !body.api_key.includes('****')) updates.api_key = body.api_key;
+    if (body.api_secret && body.api_secret !== '********') updates.api_secret = body.api_secret;
+    if (body.api_passphrase && body.api_passphrase !== '********') updates.api_passphrase = body.api_passphrase;
+    if (body.private_key && body.private_key !== '********') updates.private_key = body.private_key;
+    if (body.funder_address) updates.funder_address = body.funder_address;
+
+    updateSettings(updates);
+    insertLog('INFO', 'server', `Settings updated: ${Object.keys(updates).join(', ')}`);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Data Management ───────────────────────────────────────────────────────────
+
+app.post('/api/clear/:table', (req, res) => {
+  try {
+    clearData(req.params.table);
+    insertLog('INFO', 'server', `Cleared table: ${req.params.table}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Health Check ────────────────────────────────────────────────────────────────
+
+app.get('/api/health', (_req, res) => {
+  const settings = getSettings();
+  res.json({
+    ok: true,
+    mode: settings.paper_mode === 1 ? 'paper' : 'live',
+    botRunning: bot.running,
+    uptime: process.uptime()
+  });
+});
+
+// ── SPA Fallback ────────────────────────────────────────────────────────────────
+
+app.get('*', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// ── Start ───────────────────────────────────────────────────────────────────────
+
+app.listen(PORT, () => {
+  console.log(`\n  moneyz arbitrage bot`);
+  console.log(`  Dashboard:  http://localhost:${PORT}`);
+  console.log(`  API:        http://localhost:${PORT}/api/health`);
+  console.log();
+  insertLog('INFO', 'server', `Server started on port ${PORT}`);
+});
